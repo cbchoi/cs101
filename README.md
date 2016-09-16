@@ -1,13 +1,9 @@
-# cs101
+# Notes
+These materials are created by Prof. Otfried Cheong at KAIST. 
+Since the original version teaching materials are implemented using Python 2.7, 
+I have modified the materials to support Python 3.X. 
+You may find the orignal codes and teaching materials in the KAIST folder.
 
-These are the materials that I created for the introductory
-programming course CS101 taught at KAIST to all freshmen students,
-regardless of their major.
-
-I created those materials in 2010, they are still used with only minor
-modifications.
-
-Lecture slides are in Ipe format (ipe.otfried.org).
-
-The slides for the labs in the lab subdirectory where made by the TAs
-for the labs in Fall 2010.
+## Modifications
++ Python Image Library -> Pillow
++ Changing Python 2.7 syntax to Python 3.X sytanx
