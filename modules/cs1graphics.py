@@ -1,13 +1,11 @@
 """cs1graphics.py
 
-Copyright 2008-2012, David Letscher and Michael H. Goldwasser
+Copyright 2008-2014, David Letscher, Michael H. Goldwasser, Christopher Porter
 
 Go to www.cs1graphics.org for more information.
 
-This is Version 1.2a2 alpha bugfix release (18 January 2012)
-       Detabified (15 April 2012)
+This is Version 1.2 multithreaded release (23 July 2014)
 """
-
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
@@ -22,11 +20,60 @@ This is Version 1.2a2 alpha bugfix release (18 January 2012)
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 
-# Configuration Options
-_nativeThreading = False     # if True, this allows for true multi-threading
-_mathMode = False            # if True, coordinate system uses lower-left origin
+# If you are interested in doing further development of cs1graphics,
+# please contact the authors to receive the Developer's Guide.
+
+
+# Configuration Options:
+# ----------------------
+
+# By default, cs1graphics uses true multi-threading. However, the
+# default Python/Tk implementation shipped on many versions of Apple's
+# OSX operating system does not allow for such support. The following
+# flag should be changed to False to switch to a slightly more limited
+# model of threading. This behavior can also be triggered
+# programmatically by calling configureNativeThreading(False) prior to
+# issuing any graphics commands.
+
+_nativeThreading = False
+
+# By default, cs1graphics uses the common "computer science"
+# coordinate system, with the origin in the top-left corner of a
+# window, and with the y-axis oriented so that positive values are
+# below the origin. To get a traditional "mathematics" coordinate
+# system, with the origin in the bottom-left and the positive y-axis
+# oriented above the origin, the following flag can be changed to
+# True. This behavior can also be triggered programmatically by
+# calling configureMathMode(True) prior to issuing any graphics
+# commands.
+
+_mathMode = False
+
+# cs1graphics allows for a layer to be recursively nested within
+# itself, for some cool effects. The rendering of such recursion is
+# artificially capped with the following recursive limit. This limit
+# may also be changed programmatically with the
+# configureSetRecursionLimit function.
+
 _RECURSIVE_LIMIT = 10
-_debug = 0
+
+# The following dictionary of flags should only be used by developers
+# to adjust the level of verbosity when debugging various aspects of
+# the system.
+
+_DEBUG = {
+    'wait' : 0,
+    'mainLoop' : 0,
+    'processEvents' : 0,
+    'Events' : 0,
+    'Tkinter' : 0,
+    'Front' : 0,
+    'Middle' : 0,
+    'RenderedH' : 0,
+    'UpdateManager' : 0,
+    'processCommands' : 0,
+    }
+
 _dashMultiplier = 2          # oddity about whether pattern should be (a,b) or (a,b,a,b)
 
 import copy as _copy
@@ -35,13 +82,13 @@ import random as _random
 import time as _time
 import threading as _threading
 import atexit as _atexit
-import tempfile as _tempfile
 import os as _os
 import sys as _sys
 import traceback as _traceback
 from array import array as _array
-import cStringIO as _cStringIO
-import base64 as _base64
+
+from io import StringIO
+from io import BytesIO
 
 # change in module names for Python 2 vs 3
 try:
@@ -64,12 +111,14 @@ except ImportError:
         raise ImportError('cs1graphics requires that Tkinter be installed')
 
 try:
-    import Image as _Image
-    import ImageDraw as _ImageDraw
-    import ImageTk as _ImageTk
+    from PIL import Image as _Image
+    from PIL import ImageDraw as _ImageDraw
+    from PIL import ImageTk as _ImageTk
+    _pilAvailable = True
 except ImportError:
-    raise ImportError('cs1graphics requires that PIL be installed')
-_pilAvailable = True
+    _pilAvailable = False
+
+import base64 as _base64
 
 # Library
 _tkroot = None
@@ -86,34 +135,34 @@ except NameError:
 
 
 # Global Configuration Controls
-def configureNativeThreading():
-    """Configures cs1graphics to run in native multi-threaded mode.
+def configureNativeThreading(flag=False):
+    """Configures cs1graphics to run in native multi-threaded mode when flag is True.
 
-    By default, the library is predominantly single-threaded, with all
-    rendering in the primary thread and EventHandlers activated only
-    when the end of the main thread is reached, or an explicit
-    (blocking) call to startEventHandling() is made.
+    By default, the library uses a multi-threaded model in which case
+    all rendering is managed by a secondary thread, and EventHandlers
+    are immediately activated once registered without blocking the
+    primary thread.
 
-    On systems that support accessing Tkinter from a secondary thread,
-    an initial call to this function switches to a multi-threaded
-    model in which case all rendering is managed by a secondary
-    thread, and EventHandlers are immediately activated once
-    registered without blocking the primary thread.
+    However, on systems that do not support accessing Tkinter from a
+    secondary thread, the model can be changed to be single-threaded,
+    with all rendering in the primary thread and EventHandlers
+    activated only when the end of the main thread is reached, or an
+    explicit (blocking) call to startEventHandling() is made.
 
     Note: This command must be executed prior to the use of any core
     library functionality.
 
     Note: As an alternative, your cs1graphics installation can be
-    configured to use native threading as the default mode by setting
-    the variable, _nativeThread = True, in the file cs1graphics.py.
+    configured with the default mode set using the variable
+    _nativeThread in the preamble of file cs1graphics.py.
     """
     if _graphicsManager._state != 'Initial':
         raise GraphicsError('configuration must occur prior to other use of the library')
     global _nativeThreading
     _nativeThreading = True
 
-def configureMathMode():
-    """Forces cs1graphics to use standard math coordinate system.
+def configureMathMode(flag=True):
+    """Forces cs1graphics to use standard math coordinate system when flag is True.
 
     By default, cs1graphics uses a standard computer graphics
     coordinate system with the origin at the top-left and the positive
@@ -128,13 +177,13 @@ def configureMathMode():
     library functionality.
 
     Note: As an alternative, your cs1graphics installation can be
-    configured to use the math coordinate system by default by setting
-    the variable, _mathMode = True, in the file cs1graphics.py.
+    configured with the default coordinate system set using the
+    variable _mathMode in the preamble of file cs1graphics.py.
     """
     if _graphicsManager._state != 'Initial':
         raise GraphicsError('configuration must occur prior to other use of the library')
     global _mathMode
-    _mathMode = True
+    _mathMode = flag
 
 def configureSetRecursionLimit(limit):
     """Changes the limit on recursion for drawable inclusion.
@@ -156,11 +205,34 @@ def configureSetRecursionLimit(limit):
     
 class GraphicsError(Exception):
     def __init__(self, message, recoverable=False):
-        Exception.__init__(self, message)
+        super(GraphicsError, self).__init__()
         self._recoverable = recoverable
 
 
 # Data structures
+
+
+# special purpose comparator for chains, since Python3 no longer allows for us to use default < for chain tuples that include a class instance.
+
+def _chainCompare(a, b):
+    return _chainCompareRecurse(a, b, 0)
+  
+def _chainCompareRecurse(a, b, k):
+    """Compare implicit slices a[k:] and b[k:]"""
+    if len(a) == k:
+        return len(b) > k
+    elif len(b) == k:
+        return False
+    elif a[k][0] < b[k][0]:
+        return True
+    elif b[k][0] < a[k][0]:
+        return False
+    elif a[k][1] == b[k][1]:
+        return _chainCompareRecurse(a, b, k+1)
+    else:
+        # arbitrary tie-breaker for our model of chains with multiple inheritance
+        return str(a[k][1]) < str(b[k][1])
+
 class _OrderedMap:
 
   """Implements an ordered map.
@@ -696,7 +768,7 @@ class _Hierarchy:
         for t in tuples:
             self._computeUpwardChainsRecurse(results,t,counts)
             
-        if _debug >= 2:
+        if _DEBUG['Middle'] >= 2:
             print('ComputeUpwardChains('+str(drawable)+','+str(counts)+') returning:')
             for c in results:
                 print('    '+str(tuple(c)))
@@ -730,7 +802,7 @@ class _Hierarchy:
         """
         results = []
         self._computeDownwardChainsRecurse(results, drawTuple, {})
-        if _debug >= 2:
+        if _DEBUG['Middle'] >= 2:
             print('ComputeDownwardChains('+str(drawTuple)+') returning:')
             for c in results:
                 print('    '+str(tuple(c)))
@@ -804,7 +876,14 @@ class _RenderedHierarchy:
         newNode._chain = chain
         newNode._depth = depth
         newNode._transformation = transformation
-        newNode._cumulativeTransformation = parentNode._cumulativeTransformation*transformation
+
+        if parentChain and parentChain[-1][0] is chain[-1][0] and parentChain[-1][1] is not chain[-1][1]:
+            # do not reapply local transform if parent call to _draw is reflected in the chain
+            # (recognized by same object ID, but with different class; this allows recursive layer)
+            newNode._cumulativeTransformation = parentNode._cumulativeTransformation * _Transformation()
+        else:
+            # standard case
+            newNode._cumulativeTransformation = parentNode._cumulativeTransformation * transformation
         newNode._renderedDrawable = renderedDrawable
         newNode._parent = parentNode
 
@@ -880,7 +959,7 @@ class _RenderedHierarchy:
     def changeDepth(self, chain, newDepth):
         node = self._nodeLookup[chain]
         oldDepth = node._depth
-        if _debug >= 1.5:  print('change depth of ' + str(chain) + ' from ' + str(oldDepth) + ' to ' + str(newDepth))
+        if _DEBUG['RenderedH'] >= 1.5:  print('change depth of ' + str(chain) + ' from ' + str(oldDepth) + ' to ' + str(newDepth))
         node._depth = newDepth
         parent = node._parent
         handle = parent._sortedChildren.find(oldDepth)
@@ -891,7 +970,7 @@ class _RenderedHierarchy:
         if (prevSib is not None and newDepth < prevSib.key()) or \
            (nextSib is not None and newDepth > nextSib.key()):
             # must re-thread relative to siblings
-            if _debug >= 2.5:
+            if _DEBUG['RenderedH'] >= 2.5:
                 for (k,v) in iter(parent._sortedChildren):
                     print( '  child: ' + str(k) + ' ' + str(v))
             self._removeThreads(node, parent)   # detach from old location
@@ -903,13 +982,23 @@ class _RenderedHierarchy:
     def changeTransform(self, chain, newTransform):
         node = self._nodeLookup[chain]
         node._transformation = newTransform
-        node._cumulativeTransformation = node._parent._cumulativeTransformation * newTransform
+        if len(chain) > 1 and chain[-2][0] is chain[-1][0] and chain[-2][1] is not chain[-1][1]:
+            # do not reapply change if parent call to _draw is reflected in the chain
+            node._cumulativeTransformation = node._parent._cumulativeTransformation * _Transformation()
+        else:
+            node._cumulativeTransformation = node._parent._cumulativeTransformation * newTransform
         
         # Propogate to children
         toFix = list(node._children.values())
         while len(toFix) > 0:
             n = toFix.pop()
-            n._cumulativeTransformation = n._parent._cumulativeTransformation * n._transformation
+            childTuple = n._chain[-1]
+            parentTuple = n._parent._chain[-1]
+            if childTuple[0] is parentTuple[0] and childTuple[1] is not parentTuple[1]:
+                # do not reapply change if parent call to _draw is reflected in the chain
+                n._cumulativeTransformation = n._parent._cumulativeTransformation * _Transformation()
+            else:
+                n._cumulativeTransformation = n._parent._cumulativeTransformation * n._transformation
             toFix.extend(n._children.values())
             
         return (self.first(node), self.last(node))    # Return range of things that need to be changed
@@ -1013,7 +1102,7 @@ class _UpdateManager:
         def __init__(self, chain):
             """New node is presume 'stable' unless informed subsequently"""
             self._chain = chain
-            self._publicChildren = _OrderedMap()
+            self._publicChildren = _OrderedMap(_chainCompare)
             self._privateChildren = None
             self._publicUpdates = {}
             self._privateUpdates = None
@@ -1068,11 +1157,11 @@ class _UpdateManager:
             # occurred or that remove/add pairs took place, since
             # those events should cause changes to the state of the
             # public branch.
-            if _debug >= 2:
+            if _DEBUG['UpdateManager'] >= 2:
                 print("Within _resolveMirror on node " + str(self))
             
             for (chain, child) in list(privateMap):
-                if _debug >= 3:
+                if _DEBUG['UpdateManager'] >= 3:
                     print("Resolving child " + str(child) + " with status " + child._status + " and special " + child._special)
                 if child._special == 'remove':      # anything else here was after the remove
                     self._updateRecurse(chain, 'remove', {}, privateMap)
@@ -1144,7 +1233,7 @@ class _UpdateManager:
 
         def _updateRecurse(self, chain, style, properties={}, parentMap=None):
             """Note that parentMap need only be sent when style is 'remove'."""
-            if _debug >= 3:
+            if _DEBUG['Middle'] >= 3:
                 print('_UpdateManager._node._updateRecurse called with\n    ' + '\n    '.join([str(x) for x in (self,chain,style,properties)]))
                 print('  Node is currently ' + ('frozen' if self.isFrozen() else 'unfrozen'))
     
@@ -1182,7 +1271,7 @@ class _UpdateManager:
                 # check for other children that should be contained under
                 # new child, then recurse (on what will be base case)
                 child = _UpdateManager._node(chain)
-                if _debug >= 2.5:
+                if _DEBUG['Middle'] >= 2.5:
                     print("created new _UpdateManager._node: " + str(child) + " for chain " + str(chain))
                 while after is not None and after.key()[:len(chain)] == chain:
                     relocate = after
@@ -1193,9 +1282,9 @@ class _UpdateManager:
                 child._updateRecurse(chain, style, properties, children)
 
         def _flushRecurse(self, parentMap=None):
-          if _debug >= 3:
+          if _DEBUG['Middle'] >= 3:
               print('_flushRecurse called on node ' + str(self))
-              print('isFrozen currently' + str(self.isFrozen()))
+              print('isFrozen currently ' + str(self.isFrozen()))
     
           if self._status != 'stable' or len(self._publicUpdates) > 0:
               # this node needs to be added/removed or has properties to push
@@ -1206,6 +1295,8 @@ class _UpdateManager:
           # consider all public children, even if current node is frozen
           for (key,c) in list(self._publicChildren):              # use copy, since calls may mutate
               for result in c._flushRecurse(self._publicChildren):
+                  #print ('   OH HYE, HERE IS THE RESULT ' + str(result))
+                  #print ('\n\n\n')
                   yield result
     
           if parentMap is not None and not self.isFrozen():
@@ -1235,12 +1326,12 @@ class _UpdateManager:
         For 'add' or 'update', properties should be dictionary of key/value pairs.
         Empty dicitonary should be used for remove/freeze/unfreeze.
         """
-        if _debug >= 1:
+        if _DEBUG['Middle'] >= 1:
             print('\n_UpdateManager.update called with\n    ' + '\n    '.join([str(x) for x in (chain,style,properties)]))
             if not isinstance(style, basestring):
                 raise TypeError('style should be a string')
             if style not in ('add', 'remove', 'freeze', 'unfreeze', 'update'):
-                raise ValueError('invalud style designator: ' + str(statusFlags))
+                raise ValueError('invalid style designator: ' + str(statusFlags))
             if not isinstance(properties, dict):
                 raise TypeError('properties should be a dictionary')
             if style in ('remove', 'freeze', 'unfreeze') and len(properties) > 0:
@@ -1258,7 +1349,7 @@ class _UpdateManager:
         Objects yielded are (chain, status, properties)
         where status is 'add', 'remove', or 'stable' and properties is a dictionary
         """
-        if _debug >= 1:
+        if _DEBUG['Middle'] >= 1:
             print('_UpdateManager.flush() called')
         return self._root._flushRecurse()
 
@@ -1327,12 +1418,14 @@ class _GraphicsManager:
         self._commandLock.acquire()
 
     def completeRefresh(self, pushUpdates=True):
-        # TODO:  in single-threaded, wait until LAST reentrant lock released before pushing
+        # In single-threaded, wait until LAST reentrant lock released before pushing
         if pushUpdates:
           self.addCommandToQueue(('push updates',))
           if not _nativeThreading:
-              self.processCommands()
-              _tkroot.update()
+              # Loop to check if queue is empty
+              while not self._commandQueue.empty():
+                  self.processCommands()
+                  _tkroot.update()
         self._commandLock.release()
 
     def addCommandToQueue(self, command):
@@ -1347,14 +1440,17 @@ class _GraphicsManager:
                 _atexit.register(_exitMainThread)
 
         if self._state != 'Failed':
-          if _debug >= 1:
-              print('addCommandToQueue: ' + str(command))
+          if _DEBUG['Front'] >= 1:
+              print('addCommandToQueue: ' + str(command) + ' from thread ' + repr(_threading.currentThread()))
           self._commandQueue.put(command)
 
     def _closeAll(self):
         pass # TODO
 
     def processCommands(self):
+        if _DEBUG['processCommands'] >= 1 and not _nativeThreading:
+            print('\n')
+            print('processCommands called\n')
         MAX_TIME = 0.1
         start_time = _time.time()
         try:
@@ -1375,7 +1471,7 @@ class _GraphicsManager:
                 print('If problem is repeatable, please report to bugs@cs1graphics.org.')
                 self._state = 'Failed'
                 self._closeAll()
-                if _debug > 0:    # exit upon first error
+                if max(_DEBUG.values()) > 0:    # exit upon first error
                     _traceback.print_exc(file=_sys.stdout)
                     _sys.exit()
 
@@ -1388,9 +1484,8 @@ class _GraphicsManager:
         return depthKey
 
     def processCommand(self, command):
-        if _debug >= 1:
-            print('')
-            print('Manager executing: ' + str(command))
+        if _DEBUG['processCommands'] >= 1:
+            print('Manager executing: ' + str(command) + ' from thread ' + repr(_threading.currentThread()))
 
         # Rendering
         if command[0] == 'push updates':
@@ -1421,7 +1516,7 @@ class _GraphicsManager:
         elif command[0] == 'object added':
             containerTuple = command[1]
             drawableTuple = command[2]
-            if _debug >= 1:
+            if _DEBUG['processCommands'] >= 1:
                 print('_middleHierarchy.addLink: ' + str(containerTuple) + ' ' + str(drawableTuple))
             self._middleHierarchy.addLink(containerTuple, drawableTuple)
 
@@ -1440,7 +1535,7 @@ class _GraphicsManager:
                 for u in self._middleHierarchy.computeUpwardChains(containerTuple, count):
                     tc = tuple(u + d) 
 
-                    if _debug >= 1.5:
+                    if _DEBUG['Middle'] >= 1.5:
                         print('\nAdding chain to updateManager: ' + repr(tc))
                         print("Effective depth " + str(properties['depth']))
 
@@ -1454,12 +1549,14 @@ class _GraphicsManager:
             for c in self._middleHierarchy.computeUpwardChains(parent):
                 c.append( child )
                 self._updateManager.update(tuple(c), 'remove')
-            if _debug >= 1:
+            if _DEBUG['processCommands'] >= 1:
                 print('_middleHierarchy.removeLink: ' + str(parent) + ' ' + str(child))
             self._middleHierarchy.removeLink(parent,child)
             
         # Drawables
         elif command[0] == 'update':
+            #print (    'The following is command[1] ' + str(command[1]))
+            #print (    'The following is command[2] ' + str(command[2]))
             self._middleProperties.setdefault(command[1],{}).update(command[2])
             if command[1] in self._middleHierarchy:
                 for chain in self._middleHierarchy.computeUpwardChains(command[1]):
@@ -1467,7 +1564,7 @@ class _GraphicsManager:
                         parentTuple = chain[-2]
                         childTuple = chain[-1]
                         command[2]['depth'] = self.serializeDepth(command[2]['depth'], parentTuple, childTuple)
-                        if _debug >= 1:
+                        if _DEBUG['processCommands'] >= 1:
                             print('Updating Effective Depth: %s' % str(command[2]['depth']))
                     self._updateManager.update(tuple(chain), 'update', command[2])
                 
@@ -1476,13 +1573,18 @@ class _GraphicsManager:
             good = True
             i = None
             try:
+                #######################################################
+                #modified by cbchoi
                 if s[:7] != "base64:":
                     i = _Tkinter.PhotoImage(file=command[1])
+                    
                 else:
-                    data = _base64.b64decode(s[7:])
-                    r = _cStringIO.StringIO(data)
+                    data = _base64.b64decode(s[7:])    
+                    #######################################################
+                    r = BytesIO(data)
                     i = _ImageTk.PhotoImage(_Image.open(r).convert('RGBA'))
-            except:
+                    #######################################################
+            except _Tkinter.TclError:
                 good = False
 
             if good:
@@ -1503,10 +1605,10 @@ class _GraphicsManager:
 
     def _pushUpdates(self):
         # Loop through update manager, adjust the rendered hierarchy and rendering
-        if _debug >= 1:
+        if _DEBUG['Middle'] >= 1:
             print("_pushUpdates called")
         for (chain, status, properties) in self._updateManager.flush():
-            if _debug >= 1:
+            if _DEBUG['Middle'] >= 2:
                 print('_pushUpdates: ' + str(status)+' '+str(chain)+' '+str(properties))
                 if self._renderedHierarchy.hasChain(chain):
                     print('    Rendered Depth is ' + str(self._renderedHierarchy.getNode(chain)._depth))
@@ -1520,10 +1622,10 @@ class _GraphicsManager:
                     while node is not None and node._renderedDrawable is None:
                         node = node._next
                     if node is not None and node._chain[0] == chain[0]:  # TODO: correct treatment of forest???
-                        if _debug >= 1: print('Putting '+str(current._renderedDrawable)+' above '+str(node._renderedDrawable))
+                        if _DEBUG['Middle'] >= 1: print('Putting '+str(current._renderedDrawable)+' above '+str(node._renderedDrawable))
                         current._renderedDrawable.putAbove(node._renderedDrawable)
                     else:
-                        if _debug >= 1: print('Putting '+str(current._renderedDrawable)+' at bottom')
+                        if _DEBUG['Middle'] >= 1: print('Putting '+str(current._renderedDrawable)+' at bottom')
                         current._renderedDrawable.putAbove(None)
 
             elif status == 'remove':
@@ -1548,7 +1650,7 @@ class _GraphicsManager:
                 if 'depth' in properties:
                     (first, last) = self._renderedHierarchy.changeDepth(chain, properties['depth'])
                     if first is not None:   # something changed
-                        if _debug >= 1.5: print('first, last = '+str( (first._renderedDrawable,last._renderedDrawable) ))
+                        if _DEBUG['Middle'] >= 2: print('first, last = '+str( (first._renderedDrawable,last._renderedDrawable) ))
 
                         # first goal is finding an adequate anchor below this group
                         below = last._next
@@ -1559,12 +1661,12 @@ class _GraphicsManager:
                         current = last
                         while current != first._prev:
                             if current._renderedDrawable is not None:
-                                if below is not None:
-                                    if _debug >= 1.5:
+                                if below is not None and below._chain[0] == chain[0]:
+                                    if _DEBUG['Middle'] >= 1:
                                         print('Putting '+str(current._renderedDrawable)+' above '+str(below._renderedDrawable))
                                     current._renderedDrawable.putAbove(below._renderedDrawable)
                                 else:
-                                    if _debug >= 1.5:
+                                    if _DEBUG['Middle'] >= 1:
                                         print('Putting ' + str(current._renderedDrawable) +  ' at bottom')
                                     current._renderedDrawable.putAbove(None)
                                 below = current
@@ -1577,27 +1679,25 @@ class _GraphicsManager:
                         rd.update(properties)
 
     def _createRendered(self, chain, properties):
-        subchain = chain[-1][0]
-        if isinstance(subchain, Canvas):
-            return _RenderedCanvas(chain, properties)
-        elif isinstance(subchain, Circle):
-            return _RenderedCircle(chain, properties)
-        elif isinstance(subchain, Ellipse):
-            return _RenderedCircle(chain, properties)          # note well: using _renderedCircle
-        elif isinstance(subchain, Rectangle):                # note well: Square qualifies
-            return _RenderedRectangle(chain, properties)
+        mapping = {
+            Canvas    : _RenderedCanvas,
+            Circle    : _RenderedCircle,
+            Ellipse   : _RenderedCircle,       # note well: using _renderedCircle
+            Rectangle : _RenderedRectangle,
+            Polygon   : _RenderedPolygon,
+            Path      : _RenderedPath,
+            Text      : _RenderedText,
+            Image     : _RenderedImage,
+            }
 
-        # For next pair of cases, we test for more specific Polygon before Path.
-        # Also, note that we render ClosedSpline as a Polygon and Spline as a Path
-        elif isinstance(subchain, Polygon):
-            return _RenderedPolygon(chain, properties)
-        elif isinstance(subchain, Path):
-            return _RenderedPath(chain, properties)
+        goal = chain[-1][1]
+        rendered = mapping.get(goal)
+        if _DEBUG['Tkinter'] >= 2: print('_createRendered called on chain' + str(chain) + ' using ' + str(rendered))
 
-        elif isinstance(subchain, Text):
-            return _RenderedText(chain, properties)
-        elif isinstance(subchain, Image):
-            return _RenderedImage(chain, properties)
+        if rendered is not None:
+            return rendered(chain, properties)   # create new instance
+        else:
+            return None                          # nothing to render
 
     def executeFunction(self, command):
         # Perform a single command and return a value
@@ -1616,7 +1716,8 @@ class _GraphicsManager:
     def addEventToQueue(self, handler, event):
         if self._handlingEvents == 'Always':
             # Start a new thread and go
-            pass # TODO
+            #What's to be expected is reasonable, call the
+            handler.handle(event)
         elif self._handlingEvents == 'Yes':
             self._eventQueue.put((handler,event))
         elif self._handlingEvents == 'Waiting' and event._trigger == self._waitingObject:
@@ -1629,6 +1730,7 @@ class _GraphicsManager:
         #handlers.add(handler)
         #self._eventHandlers[obj] = handlers
         self._eventHandlers.setdefault(obj, set()).add(handler)
+        #print ('  Event Handler for ' + str(obj) + ' ' + str(self._eventHandlers[obj]))
             
     def removeHandler(self, obj, handler):
         s = self._eventHandlers.get(obj, set())
@@ -1638,6 +1740,8 @@ class _GraphicsManager:
             raise ValueError()
             
     def processEvents(self):
+        if _DEBUG['processEvents'] >= 5:
+            print ('Entering process events\n')
         while not self._eventQueue.empty():
             (handler, event) = self._eventQueue.get(False)
             self._lastEvent = event
@@ -1648,22 +1752,43 @@ class _GraphicsManager:
             handler.handle(event)
         
     def wait(self, waiter):
+        if _DEBUG['wait'] >= 1:
+            print ('_handlingEvents = ' + self._handlingEvents)
+            print ('  The following is the currentThread in wait')
+            print (_threading.currentThread())
         if self._handlingEvents == 'Always':
             lock = _threading.Lock()
             rh = _ReleaseHandler(lock)
+            self.addHandler(waiter,rh)
+            lock.acquire()
+            self.removeHandler(waiter,rh)
             return rh._event
         elif self._handlingEvents == 'No':
+            if _DEBUG['wait'] >= 1: print ('addHandler is called')
             self.addHandler(waiter, EventHandler())
             self.mainLoop(waiter, True)
             return self._lastEvent
         
     def mainLoop(self, waiting=None, exitOnAllClosed=True):
         if waiting:
+            #handlingEvents is set to waiting to prevent loop
+            if _DEBUG['mainLoop'] >= 3:
+                print ('_handlingEvents is currently: ') + self._handlingEvents
             self._handlingEvents = 'Waiting'
+            if _DEBUG['mainLoop'] >= 2:
+                print ('   waiting is the following ')
+                print (waiting)
+                print ('\n')
+            #waitingObject is updated to be waiting (canvas then circle)
             self._waitingObject = waiting         
-        
+        #Might want to note states, when they could change, same for _handlingEvents
+        #A sort of state transition guide
         while self._state == 'Running' and self._handlingEvents in ('Yes', 'Waiting'):
+            if _DEBUG['mainLoop'] >= 4:
+                print ('About to call _tkroot.update()')
             _tkroot.update()
+            if _DEBUG['mainLoop'] >= 4:
+                print ('Finished call _tkroot.update()')
             self.processEvents()
             if exitOnAllClosed and len(_graphicsManager._openCanvases) == 0:
                 break
@@ -1744,7 +1869,7 @@ class _ReleaseHandler(EventHandler):
 class _EventTrigger(object):
 
     def __init__(self):
-        pass
+        super(_EventTrigger, self).__init__()
 
     def wait(self):
         """Wait for an event to occur.
@@ -1775,7 +1900,7 @@ class _EventTrigger(object):
     
 class _EventThread(_threading.Thread):
     def __init__(self, handler, event):
-        _threading.Thread.__init__(self)
+        super(_EventThread, self).__init__()
         self._handler = handler
         self._event = event
     
@@ -2430,6 +2555,11 @@ class Color(object):
 
     def __eq__(self, other):
         """Return true if the two colors have equivalent value."""
+        if not isinstance(other, Color):
+            try:
+                other = Color(other)
+            except (TypeError, ValueError):
+                return False
         return ( (self._transparent, self._colorValue) ==
                  (other._transparent, other._colorValue) )
 
@@ -2468,6 +2598,7 @@ class Color(object):
 
 class _GraphicsContainer(object):
     def __init__(self):
+        super(_GraphicsContainer, self).__init__()
         self._contents = []
 
     def __contains__(self, obj):
@@ -2479,11 +2610,12 @@ class _GraphicsContainer(object):
         # not doing error checking here, as we want tailored messages for Canvas and Layer
         self._contents.append(drawable)
         if self in _graphicsManager._frontHierarchy:
-            if _debug >= 2: print('adding drawable to "rendered" graphics container')
+            if _DEBUG['Front'] >= 2:
+                print('adding drawable to "rendered" graphics container')
             _graphicsManager.beginRefresh()
-            cacheParent = _graphicsManager._drawParent   # probably None.  But not quite sure
-            cls = Canvas if isinstance(self, Canvas) else Layer    # although possible subclass of Layer
-            _graphicsManager._drawParent = (self,cls)
+            cacheParent = _graphicsManager._drawParent                  # probably None.  But not quite sure
+            cls = Canvas if isinstance(self, Canvas) else Layer         # or should this be type(self) for subclasses?
+            _graphicsManager._drawParent = (self, cls)
             drawable._draw()
             _graphicsManager._drawParent = cacheParent
             _graphicsManager.completeRefresh()
@@ -2493,10 +2625,10 @@ class _GraphicsContainer(object):
         # not doing error checking here, as we want tailored messages for Canvas and Layer
         self._contents.remove(drawable)
         if drawable in _graphicsManager._frontHierarchy:
-            cls = Canvas if isinstance(self, Canvas) else Layer
+            cls = Canvas if isinstance(self, Canvas) else Layer         # or should this be type(self) for subclasses?
             _graphicsManager.beginRefresh()
             childTuple = _graphicsManager._frontHierarchy.findChildTuple((self,cls), drawable)
-            if _debug >= 1:
+            if _DEBUG['Front'] >= 1:
                 print('_frontHierarchy.removeLink: ' + str( (self,cls) ) + ' ' + str(childTuple))
             _graphicsManager._frontHierarchy.removeLink((self,cls), childTuple)
             _graphicsManager.addCommandToQueue(('object removed', (self,cls), childTuple))
@@ -2534,11 +2666,11 @@ class _GraphicsContainer(object):
         return sorted(self._contents, key=Drawable.getDepth, reverse=True)
 
 def _wrapUtility(cls):
-    if _debug >= 2: print('_wrapUtility being called on class ' + str(cls))
+    if _DEBUG['Front'] >= 2: print('_wrapUtility being called on class ' + str(cls))
     classDict = cls.__dict__
     if '_internalDraw' not in classDict:   # not alreadly wrapped
         if '_draw' in classDict:
-            if _debug >= 2: print('_wrapUtility: wrap was required')
+            if _DEBUG['Front'] >= 2: print('_wrapUtility: wrap was required')
             internalDraw = cls._draw
             setattr(cls, '_internalDraw', internalDraw)
     
@@ -2546,7 +2678,7 @@ def _wrapUtility(cls):
             # defining closure to wrap the original _draw while identifying proper class
             def drawClosure(self):
                 # Note: cls and internalDraw taken from the closure
-                if _debug >= 2: print(str(cls) + ' draw wrapper called on ' + str(self))
+                if _DEBUG['Front'] >= 2: print(str(cls) + ' draw wrapper called on ' + str(self))
                 parent = _graphicsManager._drawParent
                 if not parent:
                     raise GraphicsError('_draw should not be directly called', True)
@@ -2556,7 +2688,7 @@ def _wrapUtility(cls):
                     siblings.append( (self,cls) )
         
                 known = self in _graphicsManager._frontHierarchy        # query this before adding to hierarchy
-                if _debug >= 1:
+                if _DEBUG['Front'] >= 1:
                     print('\n_frontHierarchy.addLink: ' + str(parent) + ' ' + str( (self,cls) ))
 
                 _graphicsManager._frontHierarchy.addLink(parent, (self,cls))
@@ -2565,12 +2697,12 @@ def _wrapUtility(cls):
                 _graphicsManager.addCommandToQueue(('object added', parent, (self,cls)))
         
                 if not known:
-                    if _debug >= 2: print('about to call original _draw() for ' + str(self))
+                    if _DEBUG['Front'] >= 2: print('about to call original _draw() for ' + str(self))
                     _graphicsManager._drawParent = (self,cls)
                     internalDraw(self)           # the original wrapped function, taken from closure
                     _graphicsManager._drawParent = parent
             
-                if _debug >= 2: print('draw wrapper call ending for ' + str(self))
+                if _DEBUG['Front'] >= 2: print(str(cls) + ' draw wrapper call ending for ' + str(self))
             # end of closure
             #---------------------------------------------------------------------------
             setattr(cls, '_draw', drawClosure)
@@ -2592,7 +2724,7 @@ class Drawable(_EventTrigger):
         referencePoint  local reference point for scaling, rotating and flipping
                         (default Point(0,0) )
         """
-        _EventTrigger.__init__(self)
+        super(Drawable, self).__init__()
         _wrapUtility(self.__class__)
 
         if reference is not None:
@@ -2892,7 +3024,9 @@ class Shape(Drawable):
         """
         if reference is not None and not isinstance(reference, Point):
             raise TypeError('reference point must be a Point instance')
-        Drawable.__init__(self, reference)
+        super(Shape, self).__init__()
+        if reference is not None:
+            self.moveTo(reference.getX(), reference.getY())
         self._borderColor = Color('Black')
         self._borderColor._register(self, 'border color')
         self._borderWidth = 1
@@ -2972,13 +3106,10 @@ class Shape(Drawable):
         self._update({'dash' : self._dash})
 
     def _getProperties(self):
-        prop = Drawable._getProperties(self)
+        prop = super(Shape, self)._getProperties()
         prop.update({'border width' : self._borderWidth, 'border color' : Color(self._borderColor),
                      'dash' : self._dash})
         return prop
-
-    # putting this at Shape rather than Drawable to avoid stubbing user-defined drawables
-    def _draw(self): pass
 
 class FillableShape(Shape):
     """A shape that can be filled with an interior color."""
@@ -2994,7 +3125,9 @@ class FillableShape(Shape):
         """
         if reference is not None and not isinstance(reference, Point):
             raise TypeError('reference point must be a Point instance')
-        Shape.__init__(self, reference)
+        super(FillableShape, self).__init__()
+        if reference is not None:
+            self.moveTo(reference.getX(), reference.getY())
         self._fillColor = Color('Transparent')
         self._fillColor._register(self, 'fill color')
 
@@ -3032,7 +3165,7 @@ class FillableShape(Shape):
         return self._fillColor
 
     def _getProperties(self):
-        prop = Shape._getProperties(self)
+        prop = super(FillableShape, self)._getProperties()
         prop['fill color'] = Color(self._fillColor)
         return prop
 
@@ -3051,8 +3184,7 @@ class Canvas(_GraphicsContainer, _EventTrigger):
             autoRefresh   whether auto-refresh mode is used (default True)
 
         """
-        _GraphicsContainer.__init__(self)
-        _EventTrigger.__init__(self)
+        super(Canvas, self).__init__()
 
         if not bgColor:
             bgColor = 'white'
@@ -3241,6 +3373,10 @@ class Canvas(_GraphicsContainer, _EventTrigger):
             self._canvasOpen = False
             _graphicsManager._openCanvases.remove(self)
 
+    def _forceClose(self):
+        self.setAutoRefresh(True)
+        self.close()
+
     def add(self, drawable):
         """Add the Drawable object to the canvas."""
         if not isinstance(drawable, Drawable):
@@ -3254,7 +3390,7 @@ class Canvas(_GraphicsContainer, _EventTrigger):
         except AttributeError:
             raise Exception('child class of Drawable must provide a _draw method')
 
-        if _debug >= 1: print('\nCall to Canvas.add with self='+str(self)+' drawable='+str(drawable))
+        if _DEBUG['Front'] >= 1: print('\nCall to Canvas.add with self='+str(self)+' drawable='+str(drawable))
         _GraphicsContainer.add(self, drawable)
         
     def remove(self, drawable):
@@ -3384,10 +3520,11 @@ class Canvas(_GraphicsContainer, _EventTrigger):
 
 class _RenderedCanvas(object):
     def __init__(self, chain, properties):
-        if _debug >= 1: print('Creating _RenderedCanvas')
+        if _DEBUG['Tkinter'] >= 1:
+            print ('Tkinter making rendered canvas')
         self._parent = chain[-1][0]
         self._tkWin = _Tkinter.Toplevel()
-        self._tkWin.protocol('WM_DELETE_WINDOW', self._parent.close)
+        self._tkWin.protocol('WM_DELETE_WINDOW', self._parent._forceClose)
         self._tkWin.title(properties['title'])
         self._w = properties['width']
         self._h = properties['height']
@@ -3398,6 +3535,8 @@ class _RenderedCanvas(object):
         self._tkWin.resizable(0,0)
         
         # Setup function to deal with events
+        # Is this getting called? Seems suspcious
+        #Essentially makes a function on the fly
         callback = lambda event : self._handleEvent(event)
         self._canvas.bind('<Button>', callback)
         self._canvas.bind('<ButtonRelease>', callback)
@@ -3437,6 +3576,10 @@ class _RenderedCanvas(object):
         self._canvas.delete(fakeBG)
         
     def _handleEvent(self, event):
+        if _DEBUG['Events'] >= 1 and int(event.type) == 4:
+            print ('The following is the currentThread in _handleEvent')
+            print (_threading.currentThread())
+            #This will get run repeatedly with mouseover
         # Create the event
         e = Event()
         if not _graphicsManager._mousePrevPosition:
@@ -3488,18 +3631,23 @@ class _RenderedCanvas(object):
         else:          
             chain = ((self._parent,Canvas),)
 
+        handlers = {}   # map from handler to defining (subchain,trigger)
         for i in range(len(chain),0,-1):
             subchain = chain[:i]
+            for h in _graphicsManager._eventHandlers.get(subchain[-1][0],set()):
+                handlers.setdefault(h, subchain)    # don't overwrite higher-level chains
+        for (h,subchain) in handlers.items():
             e._trigger = subchain[-1][0]
-            for h in _graphicsManager._eventHandlers.get(e._trigger,set()):
-                transformedEvent = _copy.copy(e)
-                cumInv = _graphicsManager._renderedHierarchy.getNode(subchain)._cumulativeTransformation.inv()
-                local = _graphicsManager._renderedHierarchy.getNode(subchain)._transformation
-                trans = local.image(e._trigger._reference)  # TODO make property; not thread safe
-                p = local.image(cumInv.image(Point(e._x, e._y)))
-                transformedEvent._x = p._x - trans._x
-                transformedEvent._y = p._y - trans._y
-                _graphicsManager.addEventToQueue(h, transformedEvent)
+            transformedEvent = _copy.copy(e)
+            # QUESTION: does this work when object has nested chains because of nested _draw with inheritance?
+            cumInv = _graphicsManager._renderedHierarchy.getNode(subchain)._cumulativeTransformation.inv()
+            local = _graphicsManager._renderedHierarchy.getNode(subchain)._transformation
+            trans = local.image(e._trigger._reference)  # TODO make property; not thread safe
+            p = local.image(cumInv.image(Point(e._x, e._y)))
+            transformedEvent._x = p._x - trans._x
+            transformedEvent._y = p._y - trans._y
+            #Something should be checking queue to pull stuff and process
+            _graphicsManager.addEventToQueue(h, transformedEvent)
 
 
 # Layer class
@@ -3520,8 +3668,7 @@ class Layer(Drawable, _GraphicsContainer):
         its own coordinate system, (0,0).
 
         """
-        Drawable.__init__(self)
-        _GraphicsContainer.__init__(self)
+        super(Layer, self).__init__()
         self._final = False
 
     def finalize(self):
@@ -3534,7 +3681,7 @@ class Layer(Drawable, _GraphicsContainer):
         
     def add(self, drawable):
         """Add the Drawable object to the layer."""
-        if _debug >= 1: print('\nCall to Layer.add with self='+str(self)+' drawable='+str(drawable))
+        if _DEBUG['Front'] >= 1: print('\nCall to Layer.add with self='+str(self)+' drawable='+str(drawable))
         if self._final:
             raise Exception('cannot add objects once finalized')
         if not isinstance(drawable, Drawable):
@@ -3595,7 +3742,7 @@ class Circle(FillableShape):
         if centerPt and not isinstance(centerPt, Point):
             raise TypeError("circle's center must be specified as a Point")
 
-        FillableShape.__init__(self)
+        super(Circle, self).__init__()
         if not centerPt:
             centerPt = Point()
         oldBorderWidth = self.getBorderWidth()
@@ -3618,6 +3765,8 @@ class Circle(FillableShape):
     def getRadius(self):
         """Return the radius of the circle."""
         return _math.sqrt(self._transform._matrix[0]**2 + self._transform._matrix[1]**2)
+
+    def _draw(self): pass        # required for our built-in concrete drawables
 
 class Ellipse(FillableShape):
     """A ellipse that can be drawn to a canvas."""
@@ -3644,7 +3793,7 @@ class Ellipse(FillableShape):
         if centerPt and not isinstance(centerPt, Point):
             raise TypeError("center must be specified as a Point")
 
-        FillableShape.__init__(self) # intentionally not sending center
+        super(Ellipse, self).__init__()
         if not centerPt:
             centerPt = Point()
         oldBorderWidth = self.getBorderWidth()
@@ -3685,6 +3834,8 @@ class Ellipse(FillableShape):
         self._borderWidth = oldBorderWidth / self._transform.scale()
         self._update({'transformation': self._transform, 'border width': self._borderWidth})
 
+    def _draw(self): pass        # required for our built-in concrete drawables
+
 class Rectangle(FillableShape):
     """A rectangle that can be drawn to the canvas."""
 
@@ -3711,7 +3862,7 @@ class Rectangle(FillableShape):
         if centerPt and not isinstance(centerPt, Point):
             raise TypeError('center must be specified as a Point')
 
-        FillableShape.__init__(self)  # intentionally not sending center point
+        super(Rectangle, self).__init__()  # intentionally not sending center point
         if not centerPt:
             centerPt = Point(0,0)
         oldBorderWidth = self.getBorderWidth()
@@ -3756,6 +3907,8 @@ class Rectangle(FillableShape):
         self._borderWidth = oldBorderWidth / self._transform.scale()
         self._update({'transformation': self._transform, 'border width': self._borderWidth})
 
+    def _draw(self): pass        # required for our built-in concrete drawables
+
 class Square(Rectangle):
     """A square that can be drawn to the canvas."""
 
@@ -3777,7 +3930,10 @@ class Square(Rectangle):
         if centerPt and not isinstance(centerPt, Point):
             raise TypeError('center must be specified as a Point')
 
-        Rectangle.__init__(self, size, size, centerPt)
+        super(Square, self).__init__()
+        self.setSize(size)
+        if centerPt is not None:
+            self.moveTo(centerPt.getX(), centerPt.getY())
 
     def getSize(self):
         """Return the length of a side of the square."""
@@ -3827,7 +3983,7 @@ class Path(Shape):
         point of the path.
         """
 
-        Shape.__init__(self)
+        super(Path, self).__init__()
 
         if len(points) == 1:
             try:
@@ -3845,7 +4001,7 @@ class Path(Shape):
         self._arrows = (False,False)
 
     def _getProperties(self):
-        prop = Shape._getProperties(self)
+        prop = super(Path, self)._getProperties()
         prop['points'] = tuple(self._points)
         prop['arrows'] = self._arrows
         return prop
@@ -3956,6 +4112,21 @@ class Path(Shape):
         self._arrows = (forward,reverse)
         self._update({'arrows' : self._arrows})
 
+    def _draw(self): pass        # required for our built-in concrete drawables
+
+    def _addBatchPoints(self, *points):
+        if len(points) == 1:
+            try:
+                points = tuple(points[0])
+            except TypeError:
+                pass   # original parameter might be a single Point
+
+        for p in points:
+            try:
+                self.addPoint(p)
+            except TypeError:
+                raise
+
 class Polygon(Path,FillableShape):
     """A polygon that can be drawn to a canvas."""
 
@@ -3974,16 +4145,15 @@ class Polygon(Path,FillableShape):
         first point of the polygon.
 
         """
-        FillableShape.__init__(self)
-        try:
-            Path.__init__(self, *points)
-        except TypeError:
-            raise
+        super(Polygon, self).__init__()
+
+        self._addBatchPoints(*points)
 
     def _getProperties(self):    # need aspects of both parents
-        prop = Path._getProperties(self)
-        prop.update(FillableShape._getProperties(self))
+        prop = super(Polygon, self)._getProperties()
         return prop
+
+    def _draw(self): pass        # required for our built-in concrete drawables
 
 class Spline(Path):
     """A curved path that can be drawn to a canvas."""
@@ -4004,13 +4174,18 @@ class Spline(Path):
         point of the spline.
 
         """
+        #Quick solution, check Polygon same code
+        #Better solution: path has private method: _batchPoints takes parameter
+        #points
+        super(Spline, self).__init__()
+        
         try:
-            Path.__init__(self, *points)
+            self._addBatchPoints(*points)
         except TypeError:
             raise
 
     def _getProperties(self):
-        prop = Path._getProperties(self)
+        prop = super(Spline, self)._getProperties()
         prop['smooth'] = True               # need key, but value is really irrelevant
         return prop
 
@@ -4032,13 +4207,15 @@ class ClosedSpline(Polygon):
         first point of the spline.
 
         """
+        super(ClosedSpline, self).__init__()
+        
         try:
-            Polygon.__init__(self, *points)
+            self._addBatchPoints(*points)
         except TypeError:
             raise
 
     def _getProperties(self):
-        prop = Polygon._getProperties(self)
+        prop = super(ClosedSpline, self)._getProperties()
         prop['smooth'] = True               # need key, but value is really irrelevant
         return prop
 
@@ -4069,7 +4246,7 @@ class Text(Drawable):
         if centerPt and not isinstance(centerPt, Point):
             raise TypeError('center must be a Point')
 
-        Drawable.__init__(self)
+        super(Text, self).__init__()
         self._text = message
         self._size = fontsize
         self._color = Color('black')
@@ -4084,10 +4261,10 @@ class Text(Drawable):
         temp._color._register(temp, 'font color')
         return temp
  
-    def _draw(self): pass
+    def _draw(self): pass        # required for our built-in concrete drawables
 
     def _getProperties(self):
-        prop = Drawable._getProperties(self)
+        prop = super(Text, self)._getProperties()
         prop.update( { 'message' : self._text, 'font color' : Color(self._color),
                        'font size' : self._size, 'justify' : self._justify } )
         return prop
@@ -4159,7 +4336,7 @@ class Text(Drawable):
         if factor <= 0:
             raise ValueError('scaling factor must be a positive number')
 
-        Drawable.scale(self, factor)    # transform is really irrelevant, but leaving this to support TextBox type usage
+        super(Text,self).scale(factor)    # transform is really irrelevant, but leaving this to support multiple inheritance between Text and some other shape
         self._size *= factor
         self._update({'font size': self._size})
 
@@ -4224,7 +4401,7 @@ class Image(Drawable):
 
         The center of the image is initially aligned with Point(0,0).
         """
-        Drawable.__init__(self)
+        super(Image, self).__init__()
 
         if not 1 <= len(args) <= 2:
             raise TypeError('must either specify a filename or integer width and height')
@@ -4257,10 +4434,10 @@ class Image(Drawable):
             self._image, self._w, self._h = result
             self._data = self._alpha = _array('B')
 
-    def _draw(self): pass
+    def _draw(self): pass        # required for our built-in concrete drawables
 
     def _getProperties(self):
-        prop = Drawable._getProperties(self)
+        prop = super(Image, self)._getProperties()
         prop.update( { 'width' : self._w, 'height' : self._h, 'image' : self._image,
                        'data' : self._data[:], 'alpha' : self._alpha[:] } )
         return prop
@@ -4349,12 +4526,14 @@ class _RenderedDrawable(object):
 
     def putAbove(self, other):
         if other is not None:
+            if _DEBUG['Tkinter'] >= 2: print('calling lift('+str(self._object)+','+str(other._object)+')')
             self._canvas._canvas.lift(self._object, other._object)
         else: # Put at bottom
+            if _DEBUG['Tkinter'] >= 2: print('calling lower('+str(self._object)+')')
             self._canvas._canvas.lower(self._object)
 
     def update(self, properties):
-        if _debug >= 1: print('Updating _RenderedDrawable')
+        if _DEBUG['Tkinter'] >= 2: print('Updating _RenderedDrawable')
         pass
 
     def remove(self):
@@ -4362,7 +4541,7 @@ class _RenderedDrawable(object):
 
 class _RenderedShape(_RenderedDrawable):
     def __init__(self, chain, properties):
-        _RenderedDrawable.__init__(self, chain, properties)
+        super(_RenderedShape, self).__init__(chain, properties)
         self._width = self._transWidth = self._dash = self._borderColor = None
 
     def update(self, properties):
@@ -4417,7 +4596,7 @@ class _RenderedShape(_RenderedDrawable):
 
 class _RenderedFillableShape(_RenderedShape):
     def __init__(self, chain, properties):
-        _RenderedShape.__init__(self, chain, properties)
+        super(_RenderedFillableShape, self).__init__(chain, properties)
         self._fillColor = None
 
     def update(self, properties):
@@ -4428,7 +4607,7 @@ class _RenderedFillableShape(_RenderedShape):
 
 class _RenderedCircle(_RenderedFillableShape):
     def __init__(self, chain, properties):
-        _RenderedFillableShape.__init__(self, chain, properties)
+        super(_RenderedCircle, self).__init__(chain, properties)
         transform = _graphicsManager._renderedHierarchy.getNode(chain)._cumulativeTransformation
         points = []
         for i in range(0,360,5):
@@ -4460,7 +4639,7 @@ class _RenderedCircle(_RenderedFillableShape):
 
 class _RenderedRectangle(_RenderedFillableShape):
     def __init__(self, chain, properties):
-        _RenderedFillableShape.__init__(self, chain, properties)
+        super(_RenderedRectangle, self).__init__(chain, properties)
         transform = _graphicsManager._renderedHierarchy.getNode(self._chain)._cumulativeTransformation
 
         points = [Point(-.5,-.5), Point(-.5,.5), Point(.5,.5), Point(.5,-.5)]
@@ -4482,7 +4661,7 @@ class _RenderedRectangle(_RenderedFillableShape):
 
 class _RenderedPath(_RenderedShape):
     def __init__(self, chain, properties):
-        _RenderedShape.__init__(self, chain, properties)
+        super(_RenderedPath, self).__init__(chain, properties)
         transform = _graphicsManager._renderedHierarchy.getNode(self._chain)._cumulativeTransformation
         self._points = properties['points']
 
@@ -4561,7 +4740,7 @@ class _RenderedPath(_RenderedShape):
 
 class _RenderedPolygon(_RenderedFillableShape):
     def __init__(self, chain, properties):
-        _RenderedFillableShape.__init__(self, chain, properties)
+        super(_RenderedPolygon, self).__init__(chain, properties)
         transform = _graphicsManager._renderedHierarchy.getNode(self._chain)._cumulativeTransformation
         self._points = properties['points']
 
@@ -4611,11 +4790,12 @@ class _RenderedText(_RenderedDrawable):
     normalFactor = 1.0    # re-configured at startup so that 12pt font has approximate height 16-pixels (96 PPI)
     
     def __init__(self, chain, properties):
-        _RenderedDrawable.__init__(self, chain, properties)
+        super(_RenderedText, self).__init__(chain, properties)
         transform = _graphicsManager._renderedHierarchy.getNode(chain)._cumulativeTransformation
-        parentTransform = _graphicsManager._renderedHierarchy.getNode(chain[:-1])._cumulativeTransformation
+        parentChain = self._getParentChain()
+        parentTransform = _graphicsManager._renderedHierarchy.getNode(parentChain)._cumulativeTransformation
         parentScale = parentTransform.scale()
-        if not transform.scaleAndTranslate() and parentScale > 0:
+        if not parentTransform.scaleAndTranslate() and parentScale > 0:
             raise GraphicsError('text cannot be rotated or sheared unless Python Image Library is installed', True)
         center = transform.image(Point(0.,0.))
         self._renderedSize = properties['font size']
@@ -4627,6 +4807,14 @@ class _RenderedText(_RenderedDrawable):
         _graphicsManager._objectIdRegistry[(self._canvas._canvas,self._object)] = self
 
         _RenderedDrawable.update(self, properties)
+
+    def _getParentChain(self):
+        """Determine proper parent chain considering possible inheritance model."""
+        parentChain = chain = self._chain
+        while parentChain and parentChain[-1][0] is chain[-1][0]:
+            # when subclass of text exists, go back in chain until beyond that object's entries
+            parentChain = parentChain[:-1]
+        return parentChain
 
     def update(self, properties):
         if 'message' in properties:
@@ -4644,7 +4832,8 @@ class _RenderedText(_RenderedDrawable):
 
         if 'font size' in properties or 'transformation' in properties:
             # determine effective size
-            parentTransform = _graphicsManager._renderedHierarchy.getNode(self._chain[:-1])._cumulativeTransformation
+            parentChain = self._getParentChain()
+            parentTransform = _graphicsManager._renderedHierarchy.getNode(parentChain)._cumulativeTransformation
             parentScale = parentTransform.scale()
             if parentScale < 0:
 #                raise GraphicsError('text cannot be reflected unless Python Image Library is installed', True)
@@ -4654,10 +4843,12 @@ class _RenderedText(_RenderedDrawable):
 
         if 'transformation' in properties:
             # consider translation of text center
-            transform = _graphicsManager._renderedHierarchy.getNode(self._chain)._cumulativeTransformation
-            if not transform.scaleAndTranslate():
+            parentChain = self._getParentChain()
+            parentTransform = _graphicsManager._renderedHierarchy.getNode(parentChain)._cumulativeTransformation
+            if not parentTransform.scaleAndTranslate():
 #                raise GraphicsError('text cannot be rotated or sheared unless Python Image Library is installed', True)
                 raise GraphicsError('text cannot be rotated or sheared', True)
+            transform = _graphicsManager._renderedHierarchy.getNode(self._chain)._cumulativeTransformation
             center = transform.image(Point(0.,0.))
             self._canvas._canvas.coords(self._object, center.getX(), center.getY())
 
@@ -4669,7 +4860,7 @@ class _RenderedImage(_RenderedDrawable):
     # image, transform, and (data,alpha) arrays.
     
     def __init__(self, chain, properties):
-        _RenderedDrawable.__init__(self, chain, properties)
+        super(_RenderedImage, self).__init__(chain, properties)
 
         self._w = properties['width']            # needed for _buildImage
         self._h = properties['height']
@@ -4757,6 +4948,8 @@ class _RenderedImage(_RenderedDrawable):
 
 # Library initialization and shutdown
 def _initLibrary():
+    if _DEBUG['Tkinter'] >= 2:
+        print ('Initializing the Tkinter library')
     global _tkroot
     try:
         _tkroot = _Tkinter.Tk()
@@ -4766,6 +4959,8 @@ def _initLibrary():
         raise Exception('unable to start Tkinter on your system')
         _graphicsManager._state = 'Failed'
     _tkroot.withdraw()
+    if _DEBUG['Tkinter'] > 2:
+        print ('actual getting set to _getTextSize')
     actual = _getTextSize('X', 36)[1]
     _RenderedText.normalFactor *= 48.0 / actual  # this normalizes so that 36-pt font has 48-pixel height (96 PPI)
 
@@ -4819,6 +5014,8 @@ _graphicsManager = _GraphicsManager()
 # and subsequently to support calls to Text.getDimensions()
 # it presumes that the lock is already held for the graphics thread
 def _getTextSize(message, fontsize):
+    if _DEBUG['Tkinter'] >= 2:
+        print ('Tkinter inside _getTextSize')
     tkWin = _Tkinter.Toplevel()
     canvas = _Tkinter.Canvas(tkWin)
     size = int(round(fontsize * _RenderedText.normalFactor))
@@ -4856,5 +5053,173 @@ def _convertImage(img):
 #                t[u] &= (255 - (1 << v))   # make transparent
     return (a,t)
     
+class Button(Text, Rectangle, EventHandler):
+  """A button that can respond to events."""
+  def __init__(self, message='', centerPt=None):
+    """Create a new button.
+    
+    The width and height of the button automatically adjust
+    to the size of the displayed text.
+    
+    message   the text to display on the button
+    centerPt  where to place the center of the button
+    """
+    super(Button, self).__init__()
+    self.setMessage(message)        # automatically resizes rectangle
+    if centerPt is not None:
+        self.moveTo(centerPt.getX(), centerPt.getY())
+    self._baseBorderWidth = self._borderWidth
 
-# TODO timer, etc.
+    self.setFillColor('white')
+    self.addHandler(self)
+  
+  def _resize(self):
+    w, h = self.getDimensions()
+    self.setWidth(w+self._size)
+    self.setHeight(h+self._size)
+
+  def handle(self, event):
+    """Highlight the button when the button is clicked."""
+    if _DEBUG['Events'] >= 3:
+      print('Button self handler')
+    if event._eventType == 'mouse click':
+      Rectangle.setBorderWidth(self, self._baseBorderWidth + 2)
+    elif event._eventType == 'mouse release':
+      Rectangle.setBorderWidth(self, self._baseBorderWidth)
+
+  def _draw(self):
+    Rectangle._draw(self)
+    Text._draw(self)
+
+  def setBorderWidth(self, width):
+    """
+    Set the width of the border to the indicated width.
+    """
+    self._baseBorderWidth = width
+    Rectangle.setBorderWidth(self, width)
+    
+  def scale(self, factor):
+    """Scale the object relative to its current reference point.
+    
+    factor      scale is multiplied by this number (must be positive)
+    """
+    self._baseBorderWidth *= width
+    super(Button,self).scale(factor)
+    
+  def setMessage(self, message):
+    """Changes the button's text to message and automatically resizes the button."""
+    Text.setMessage(self, message)
+    self._resize()
+    
+  def setFontSize(self, fontsize):
+    """Changes the button's text size and automatically resizes the button."""
+    Text.setFontSize(self, fontsize)
+    self._resize()
+    
+    
+class TextBox(Text, Rectangle, EventHandler):
+  """Widget for text entry."""
+  def __init__(self, width=100, height=50, centerPt=None):
+    """Construct a box to enter text into.
+    
+    width     the width of the box
+    height    the height of the box
+    centerPt  the location of the boxes center
+    """
+    super(TextBox, self).__init__()
+    self.setWidth(width)
+    self.setHeight(height)
+    if centerPt is not None:
+        self.moveTo(centerPt.getX(), centerPt.getY())
+    self.setFillColor('white')     # rectangle interior was transparent by default
+    self.addHandler(self)
+      
+  def _draw(self):
+    Rectangle._draw(self)          # access the overridden Rectangle version of _draw
+    Text._draw(self)               # access the overridden Text version of _draw
+    
+  def handle(self, event):
+    """When the text box is in focus append any keypress to the display text."""
+    if event._eventType == 'keyboard':
+      if event.getKey() == '\b':
+        self.setMessage(self.getMessage()[:-1])
+      else:
+        self.setMessage(self.getMessage() + event.getKey())
+
+class Timer(_EventTrigger):
+    """A widget for generating one or more cs1graphics events based on a time delay
+  
+    By default, a timer generates a single event once started, after a given interval of time passes.
+    A recurring timer with a given period can be generated by means of an optional parameter to the constructor.
+    """
+    def __init__(self, delay, repeat=False):
+        """Generate a new Timer object.
+    
+        delay    the amount of time, in seconds, before the alarm triggers once started
+        repeat   if False (the default), the timer will only generate one event
+                 if True, the timer will be recurring once started, generating periodic events
+        """
+        super(Timer, self).__init__()
+        self._delay = delay
+        self._repeat = repeat
+        self._running = False
+        self._handlers = list()
+    
+    def start(self):
+        if not self._running:
+            self._forceStart()
+    
+    def _forceStart(self):
+        self._running = True
+        self._thread = _TimerThread(self, self._delay)
+        self._thread.start()
+    
+    def stop(self):
+        self._running = False
+    
+    def addHandler(self, handler):
+        if not isinstance(handler, EventHandler):
+            raise TypeError('Only child classes of EventHandler can handle events')
+        if handler not in self._handlers:
+            self._handlers.append(handler)
+        else:
+            raise ValueError('Handler is already associated to the shape')
+    
+    def removeHandler(self, handler):
+        if handler in self._handlers:
+            self._handlers.remove(handler)
+        else:
+            raise ValueError('Cannot remove hander from shape it is not associated to')
+    
+class _TimerThread(_threading.Thread):
+  def __init__(self, timer, delay):
+    super(_TimerThread, self).__init__()
+    self._timer = timer
+    self._delay = delay
+    
+  def run(self):
+    _time.sleep(self._delay)
+    if self._timer._repeat and self._timer._running:
+      self._timer._forceStart()
+    if self._timer._running:
+      for handler in self._timer._handlers:
+        e = Event()
+        e._eventType = 'timer'
+        handler.handle(e)
+
+
+class Monitor(object):
+  """Monitor class for thread synchronization."""
+  def __init__(self):
+    """Create a new monitor instance."""
+    self._lock = _threading.Lock()
+    self._lock.acquire()
+    
+  def wait(self):
+    """Wait for the monitor to be released by another thread."""
+    self._lock.acquire()
+    
+  def release(self):
+    """Release a thread that is waiting on the monitor."""
+    if self._lock.locked():
+      self._lock.release()

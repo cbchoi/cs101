@@ -25,9 +25,10 @@ from cs1robots_images import _robot_images
 # PIL isn't actually used in cs1robots, but is needed to use
 # cs1graphics properly.  So we make sure it is there, as otherwise
 # users get a confusing error message.
-import Image as _Image
-import ImageDraw as _ImageDraw
-import ImageTk as _ImageTk
+#import Image as _Image
+#import ImageDraw as _ImageDraw
+#import ImageTk as _ImageTk
+from PIL import Image, ImageDraw, ImageTk
 
 #_g._debug = 2
 
@@ -282,7 +283,7 @@ def load_world(filename = None):
   wd = {}
   # extracts avenues, streets, walls and beepers
   try:
-    exec txt in wd
+    exec(txt, wd) # modified by cbchoi
     w = _World(wd['avenues'], wd['streets'], wd['walls'], wd['beepers'])
   except:
     raise ValueError("Error interpreting world file.")
@@ -323,27 +324,34 @@ def edit_world():
     if d == "mouse click":
       x = int(e.getMouseLocation().getX())
       y = int(e.getMouseLocation().getY())
-      print "Mouse button", e.getButton(), "at", (x, y)
+      
+      ## modifed by cbchoi
+      print ("Mouse button", end="")
+      print (e.getButton(), end="")
+      print ("at", end="")
+      print (x, end = "")
+      print (y, end="")
+
       col = (x - _world.left + _world.ts / 2) / _world.ts
       row = (_world.bottom - y + _world.ts / 2) / _world.ts
       if (col % 2) == 1 and (row % 2) == 1:
-        print "corner"
+        print ("corner")
         # corner
         av = (col + 1) / 2
         st = (row + 1) / 2
         if av < 1 or av > _world.av or st < 1 or st > _world.st:
           continue
         if e.getButton() == 1:
-          print "add beeper"
+          print ("add beeper")
           _world.add_beeper(av, st)
           _scene.refresh()
         elif e.getButton() == 3:
-          print "remove beeper"
+          print ("remove beeper")
           _world.remove_beeper(av, st)
           _scene.refresh()
       elif ((col + row) % 2) == 1:
         # wall position
-        print "wall position"
+        print ("wall position")
         if (col < 1 or col >= _world.num_cols - 1 or
             row < 1 or row >= _world.num_rows - 1):
           continue
