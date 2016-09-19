@@ -12,13 +12,19 @@
 #
 
 import sys as _sys
-import Image as _Image
-import ImageTk as _ImageTk
-import easygui as _easygui
-import tkColorChooser as _tkColorChooser
-import tkFont as _tkFont
-import Tkinter as _Tk
+#import Image as _Image
+#import ImageTk as _ImageTk
+from PIL import Image as _Image
+from PIL import ImageTk as _ImageTk
 
+import easygui as _easygui
+#import tkColorChooser as _tkColorChooser
+from tkinter import colorchooser as _tkColorChooser
+
+#import tkFont as _tkFont
+from tkinter import font as _tkFont
+#import Tkinter as _Tk
+import tkinter as _Tk
 # --------------------------------------------------------------------
 
 class Picture(object):
